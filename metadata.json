@@ -1,0 +1,6 @@
+{
+  "name": "Ponto de Negócios - Catálogo",
+  "description": "Catálogo virtual premium com preenchimento via Inteligência Artificial (Gemini) e backup no Supabase.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
