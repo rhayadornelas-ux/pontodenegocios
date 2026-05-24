@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Trash2, Tag, ArrowRight, Share2, Check, Plus, Upload } from "lucide-react";
+import { Trash2, Tag, ArrowRight, Share2, Check, Plus, Upload, Pin } from "lucide-react";
 import { Product, Category, Supplier } from "../types";
 import { compressImage } from "../lib/imageCompressor";
 
@@ -15,6 +15,9 @@ interface ProductCardProps {
   isSelected?: boolean;
   onToggleSelect?: (id: string) => void;
   onUpdate?: (product: Product) => void | Promise<void>;
+  isPinned?: boolean;
+  pinnedIndex?: number;
+  onTogglePin?: (id: string) => void;
 }
 
 export default function ProductCard({
@@ -28,6 +31,9 @@ export default function ProductCard({
   isSelected = false,
   onToggleSelect,
   onUpdate,
+  isPinned = false,
+  pinnedIndex,
+  onTogglePin,
  }: ProductCardProps) {
   const [copiedLink, setCopiedLink] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
@@ -118,7 +124,7 @@ export default function ProductCard({
 
   const handleShare = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const shareUrl = `${window.location.origin}${window.location.pathname}#produto-${product.id}`;
+    const shareUrl = `${window.location.origin}${window.location.pathname}?produto=${product.id}`;
     navigator.clipboard.writeText(shareUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
@@ -164,7 +170,12 @@ export default function ProductCard({
             }}
           />
           
-          {/* No badge */}
+          {isPinned && (
+            <div className="absolute top-1.5 left-1.5 bg-amber-500 text-zinc-950 font-black text-[9px] px-2 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-0.5 shadow-sm z-10 transition-transform">
+              <Pin className="w-2 h-2 fill-zinc-950" />
+              <span>Destaque</span>
+            </div>
+          )}
 
           {/* Ctrl+V Paste Helper Overlay on Hover */}
           {isAdmin && isHovered && onUpdate && !isUpdating && (
@@ -258,6 +269,20 @@ export default function ProductCard({
                   <span className="block font-medium text-purple-700">Forn: {supplierName}</span>
                   <span className="block text-emerald-700 font-semibold">Lucro: R$ {product.profit_desired.toFixed(2)}</span>
                 </div>
+                {onTogglePin && (
+                  <button
+                    type="button"
+                    onClick={() => onTogglePin(product.id)}
+                    className={`p-2 rounded-xl transition-all border cursor-pointer ${
+                      isPinned 
+                        ? "bg-amber-100 text-amber-900 border-amber-300 font-bold shadow-xs scale-105" 
+                        : "bg-zinc-50 text-zinc-400 border-zinc-200 hover:bg-zinc-100 hover:text-zinc-650"
+                    }`}
+                    title={isPinned ? `Remover Destaque (Destaque #${pinnedIndex !== undefined ? pinnedIndex + 1 : ""})` : "Destaque (Aparecer Primeiro)"}
+                  >
+                    <Pin className={`w-4 h-4 ${isPinned ? "rotate-45 text-amber-500 fill-amber-500" : ""}`} />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => onDelete(product.id)}

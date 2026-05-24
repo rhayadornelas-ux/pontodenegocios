@@ -111,6 +111,65 @@ Sempre responda no formato JSON solicitado contendo todos esses campos de forma 
   }
 });
 
+// Endpoint to read measurement schematics/images and auto update the commercial description
+app.post("/api/catalog/extract-measurements", async (req, res) => {
+  try {
+    const { base64Image, mimeType, currentDescription } = req.body;
+    if (!base64Image) {
+      return res.status(400).json({ error: "Imagem de medidas é obrigatória." });
+    }
+
+    const ai = getGeminiClient();
+
+    // Clean data URI scheme
+    const cleanBase64 = base64Image.replace(/^data:image\/\w+;base64,/, "");
+
+    const promptText = `Analise a foto, desenho técnico, bloco de dimensões ou manual enviado de um móvel.
+Sua missão é extrair com precisão absoluta as medidas descritas ou desenhadas e fornecer duas saídas no JSON estruturado:
+1. 'measurements': Um resumo simples contendo apenas as dimensões encontradas (Exemplo: "Altura: 2,18 m | Largura: 2,30 m | Profundidade: 52 cm" ou semelhante).
+2. 'updated_description': A descrição profissional atualizada do produto. Integre as Novas Medidas extraídas na Descrição Original fornecida abaixo. Organize por tópicos, mantenha as características benéficas comerciais originais limpas (sem excesso de hashtags ou estilo poluído) e certifique-se de que a frase: "Entrega ultra rápida" esteja mantida em uma linha limpa no final da descrição.
+
+Descrição Original do Produto:\n${currentDescription || ""}`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: [
+        {
+          inlineData: {
+            data: cleanBase64,
+            mimeType: mimeType || "image/png",
+          },
+        },
+        promptText,
+      ],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            measurements: { type: Type.STRING },
+            updated_description: { type: Type.STRING },
+          },
+          required: ["measurements", "updated_description"],
+        },
+      },
+    });
+
+    if (!response || !response.text) {
+      throw new Error("Não foi possível extrair medidas da imagem enviada.");
+    }
+
+    const parsedData = JSON.parse(response.text.trim());
+    return res.json({ success: true, ...parsedData });
+  } catch (error: any) {
+    console.error("Extract measurements failed:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Erro desconhecido ao ler imagem e extrair medidas técnicas.",
+    });
+  }
+});
+
 // Endpoint to process bulk catalog extraction by URL, Copied Text, PDF, or Catalog Images
 app.post("/api/catalog/bulk-extract", async (req, res) => {
   try {

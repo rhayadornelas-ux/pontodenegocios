@@ -98,6 +98,33 @@ export default function BulkImportForm({
     setCatalogFiles((prev) => prev.filter((_, idx) => idx !== indexToRemove));
   };
 
+  // Support pasting images, PDFs or text anywhere in the importer (Ctrl + V)
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const files = Array.from(e.clipboardData.files) as File[];
+    const validFiles = files.filter(
+      (file) => file.type.startsWith("image/") || file.type === "application/pdf"
+    );
+
+    if (validFiles.length > 0) {
+      e.preventDefault();
+      processFiles(validFiles);
+      return;
+    }
+
+    // Check if user is already typing inside an input/textarea in the form
+    const activeEl = document.activeElement;
+    if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) {
+      return; // Let native text paste happen
+    }
+
+    // Otherwise, grab text from clipboard and add it to the parsed text box
+    const text = e.clipboardData.getData("text");
+    if (text) {
+      e.preventDefault();
+      setPastedText((prev) => (prev ? prev + "\n" + text : text));
+    }
+  };
+
   // Trigger Gemini API bulk extraction endpoint
   const handleExtract = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -418,10 +445,18 @@ Sempre retorne estritamente um JSON contendo a lista sob a chave 'products'.`;
   };
 
   return (
-    <div className="space-y-5 bg-white border border-zinc-150 p-5 rounded-2xl shadow-sm">
-      <div className="flex items-center gap-2 border-b border-zinc-100 pb-3">
-        <span className="w-2.5 h-2.5 rounded-full bg-indigo-650 animate-pulse" />
-        <h3 className="font-bold text-zinc-900 text-base">Importação por PDF ou Imagem (IA)</h3>
+    <div 
+      onPaste={handlePaste}
+      className="space-y-5 bg-white border border-zinc-150 p-5 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-indigo-500/20 transition-all"
+    >
+      <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
+        <div className="flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-full bg-indigo-650 animate-pulse" />
+          <h3 className="font-bold text-zinc-900 text-base">Importação por PDF ou Imagem (IA)</h3>
+        </div>
+        <span className="text-[10px] bg-indigo-50 text-indigo-750 border border-indigo-150 py-0.5 px-2 rounded-full font-black uppercase tracking-wider flex items-center gap-1">
+          📋 Ctrl + V Ativo
+        </span>
       </div>
 
       <form onSubmit={handleExtract} className="space-y-4">
@@ -434,7 +469,7 @@ Sempre retorne estritamente um JSON contendo a lista sob a chave 'products'.`;
           <div
             onDragOver={handleDragOver}
             onDrop={handleDrop}
-            className="border-2 border-dashed border-zinc-200 hover:border-indigo-500 rounded-xl p-6 text-center bg-zinc-50/50 cursor-pointer transition-colors relative"
+            className="border-2 border-dashed border-zinc-200 hover:border-indigo-500 rounded-xl p-6 text-center bg-zinc-50/50 hover:bg-zinc-50/90 cursor-pointer transition-all relative group/dropzone"
           >
             <input
               type="file"
@@ -443,9 +478,11 @@ Sempre retorne estritamente um JSON contendo a lista sob a chave 'products'.`;
               onChange={handleFileChange}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
-            <Upload className="w-6 h-6 text-zinc-400 mx-auto mb-2" />
+            <Upload className="w-6 h-6 text-zinc-400 mx-auto mb-2 group-hover/dropzone:scale-110 group-hover/dropzone:text-indigo-600 transition-transform" />
             <p className="text-xs font-bold text-zinc-700">Selecione o arquivo PDF do catálogo ou fotos</p>
-            <p className="text-[10px] text-zinc-400 mt-1">Nossa IA lê arquivos PDF completos, tabelas ou prints</p>
+            <p className="text-[10px] text-zinc-500 mt-1.5 leading-snug">
+              Arraste os arquivos aqui, procure no dispositivo ou apenas copie uma imagem/print e aperte <kbd className="bg-zinc-200 border border-zinc-350 px-1.5 py-0.5 rounded text-zinc-800 font-sans font-black text-[9px] shadow-xs select-none">Ctrl + V</kbd> para colar diretamente!
+            </p>
           </div>
         </div>
 

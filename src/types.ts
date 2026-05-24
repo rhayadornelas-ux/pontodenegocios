@@ -22,6 +22,7 @@ export interface Product {
   price_final: number;
   description: string;
   images: string[]; // Base64 strings or URLs
+  pin_index?: number | null;
   created_at?: string;
 }
 

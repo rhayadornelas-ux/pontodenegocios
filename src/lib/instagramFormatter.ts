@@ -17,13 +17,51 @@ export function formatToInstagramStyle(name: string, descriptionText: string): s
       if (delimiterIndex !== -1) {
         sub = sub.substring(0, delimiterIndex).trim();
       } else {
-        const securityIndex = sub.indexOf("🚨");
-        if (securityIndex !== -1) {
-          sub = sub.substring(0, securityIndex).trim();
+        // Look specifically for the safety block header instead of any generic '🚨' emoji
+        const upperSub = sub.toUpperCase();
+        const securityHeaderIdx = upperSub.indexOf("MÁXIMA SEGURANÇA");
+        const securityHeaderIdx2 = upperSub.indexOf("MAXIMA SEGURANCA");
+        let safetyIdx = -1;
+        if (securityHeaderIdx !== -1) {
+          safetyIdx = securityHeaderIdx;
+        } else if (securityHeaderIdx2 !== -1) {
+          safetyIdx = securityHeaderIdx2;
+        }
+
+        if (safetyIdx !== -1) {
+          let slicePoint = safetyIdx;
+          const beforeSec = sub.substring(0, safetyIdx);
+          const lastNewLine = beforeSec.lastIndexOf("\n");
+          if (lastNewLine !== -1) {
+            slicePoint = lastNewLine;
+          }
+          sub = sub.substring(0, slicePoint).trim();
         }
       }
       sourceText = sub;
     }
+  }
+
+  // Pre-process sourceText to insert newlines before tech specs that might be glued together
+  const joinedKeywords = [
+    "Especificações Técnicas:",
+    "Especificacoes Tecnicas:",
+    "Altura:",
+    "Largura:",
+    "Profundidade:",
+    "Portas:",
+    "Gavetas:",
+    "Características:",
+    "Caracteristicas:",
+    "Medidas:",
+    "Dimensões:",
+    "Dimensoes:",
+    "Comprimento:"
+  ];
+
+  for (const keyword of joinedKeywords) {
+    const regex = new RegExp(`([^\\n])(${keyword})`, "gi");
+    sourceText = sourceText.replace(regex, "$1\n$2");
   }
 
   // Split into lines
@@ -34,23 +72,37 @@ export function formatToInstagramStyle(name: string, descriptionText: string): s
 
   // Filter out any template noise if they somehow leaked through
   const filteredLines = lines.filter((line) => {
-    const lower = line.toLowerCase();
+    const lower = line.toLowerCase().trim();
     
-    // Skip template headers/footers if they leaked
+    // Protect long informational product sentences from being filtered out 
+    if (lower.length > 100) {
+      return true;
+    }
+
+    // Skip template headers/footers only if they are short copy matches
     if (
-      lower.includes("quer renovar sua casa") ||
-      lower.includes("escolha perfeita") ||
-      lower.includes("peças com acabamento") ||
-      lower.includes("máxima segurança") ||
-      lower.includes("sem sinal ou") ||
-      lower.includes("só realiza o pagamento") ||
-      lower.includes("entrega ultra rápida") ||
+      lower === "quer renovar sua casa" ||
+      lower.includes("quer renovar sua casa com") ||
+      lower.includes("esse móvel é a escolha perfeita") ||
+      lower.includes("peças com acabamento refinado") ||
+      lower.includes("máxima segurança e confiança") ||
+      lower === "máxima segurança" ||
+      lower === "maxima seguranca" ||
+      lower.includes("sem sinal ou pagamento") ||
+      lower.includes("você só realiza o pagamento") ||
+      lower.includes("voce so realiza o pagamento") ||
+      lower === "entrega ultra rápida." ||
+      lower === "entrega ultra rapida." ||
+      lower === "entrega ultra rápida" ||
+      lower === "entrega ultra rapida" ||
+      lower.includes("entrega ultra rápida para seu") ||
       lower.includes("valor especial") ||
       lower.includes("apenas r$") ||
       lower.includes("ou parcelado") ||
       lower.includes("como garantir o seu") ||
       lower.includes("entre em contato") ||
-      lower.includes("━━━━━━━━━━━━")
+      lower.includes("━━━━━━━━━━━━") ||
+      lower.includes("━━━━━")
     ) {
       return false;
     }
@@ -68,7 +120,7 @@ export function formatToInstagramStyle(name: string, descriptionText: string): s
         if (!cleanLine) return null;
 
         const lower = cleanLine.toLowerCase();
-        // Check for dimensions
+        // Check for dimensions/measurements
         if (
           lower.includes("altura") ||
           lower.includes("alt") ||
@@ -77,7 +129,10 @@ export function formatToInstagramStyle(name: string, descriptionText: string): s
           lower.includes("prof") ||
           lower.includes("compr") ||
           lower.includes("dimens") ||
-          lower.includes("medid")
+          lower.includes("medid") ||
+          lower.includes("cm") ||
+          lower.includes(" metros") ||
+          /\b\d+\s*x\s*\d+\b/.test(lower)
         ) {
           return `📐 ${cleanLine}`;
         }

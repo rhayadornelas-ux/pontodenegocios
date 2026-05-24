@@ -17,7 +17,8 @@ import {
   Truck,
   CreditCard,
   ShieldCheck,
-  Lock
+  Lock,
+  Upload
 } from "lucide-react";
 import { Product, Category, Supplier } from "../types";
 import { compressImage } from "../lib/imageCompressor";
@@ -64,6 +65,71 @@ export default function ProductDetailModal({
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // States and function for Auto-extracting measurements using IA
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
+  const [extractedMedidas, setExtractedMedidas] = useState<string | null>(null);
+
+  const processMeasurementFile = async (file: File) => {
+    setIsExtracting(true);
+    setExtractError(null);
+    setExtractedMedidas(null);
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const response = await fetch("/api/catalog/extract-measurements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base64Image: base64,
+          mimeType: file.type,
+          currentDescription: description
+        })
+      });
+
+      const resData = await response.json();
+      if (resData.success) {
+        setExtractedMedidas(resData.measurements);
+        setDescription(resData.updated_description || description);
+      } else {
+        setExtractError(resData.error || "Não foi possível extrair as medidas desta imagem.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      setExtractError("Falha na conexão ou processamento da imagem.");
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
+  const handleExtractMeasurementPhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      processMeasurementFile(e.target.files[0]);
+    }
+  };
+
+  const handleMeasurementPaste = (e: React.ClipboardEvent) => {
+    e.stopPropagation(); // Evita adicionar como foto principal do móvel
+    const items = e.clipboardData?.items;
+    if (items) {
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf("image") !== -1) {
+          const file = items[i].getAsFile();
+          if (file) {
+            e.preventDefault();
+            processMeasurementFile(file);
+            break;
+          }
+        }
+      }
+    }
+  };
 
   // Ctrl+V paste handler for editing mode in detail modal
   useEffect(() => {
@@ -165,7 +231,7 @@ export default function ProductDetailModal({
   };
 
   const handleCopyLink = () => {
-    const shareUrl = `${window.location.origin}${window.location.pathname}#produto-${product.id}`;
+    const shareUrl = `${window.location.origin}${window.location.pathname}?produto=${product.id}`;
     navigator.clipboard.writeText(shareUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -640,6 +706,66 @@ export default function ProductDetailModal({
                   placeholder="Exemplo de descrição limpa:&#10;&#10;Guarda-Roupa de casal espaçoso.&#10;&#10;Dimensões:&#10;- Altura: 2.18m&#10;- Largura: 2.30m&#10;&#10;Entrega ultra rápida."
                   className="w-full px-3 py-2 border border-zinc-250 rounded-xl text-sm text-zinc-900 bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 focus:outline-none placeholder:text-zinc-400 font-mono text-xs"
                 />
+
+                {/* Assistente inteligente de Extração de Medidas a partir de Foto */}
+                <div className="bg-amber-500/5 border border-amber-350 rounded-xl p-3.5 space-y-2.5 mt-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-650 animate-pulse" />
+                      <span className="text-[10px] font-black text-amber-950 uppercase tracking-wider">Extrair Medidas de Imagem (IA)</span>
+                    </div>
+                    <span className="text-[8px] font-black text-amber-900 bg-amber-100/80 rounded px-1.5 py-0.5 uppercase tracking-wide">Beta Inteligente ⚡</span>
+                  </div>
+                  <p className="text-[10px] text-zinc-500 leading-tight">
+                    Suba ou cole um desenho técnico, print de catálogo, rótulo ou foto para atualizar a descrição com as dimensões certinhas!
+                  </p>
+                  
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <label className={`flex-1 min-h-[34px] border border-dashed border-amber-300 hover:border-amber-500 bg-white hover:bg-amber-50/20 rounded-lg text-center cursor-pointer transition-colors flex items-center justify-center gap-1.5 px-3 py-1.5 ${isExtracting ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                      <Upload className="w-3.5 h-3.5 text-amber-600" />
+                      <span className="text-[10.5px] font-bold text-zinc-700">
+                        {isExtracting ? "Analisando imagem..." : "Subir Foto de Medidas"}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        disabled={isExtracting}
+                        onChange={handleExtractMeasurementPhoto}
+                        className="hidden"
+                      />
+                    </label>
+
+                    <div 
+                      onPaste={handleMeasurementPaste}
+                      tabIndex={0}
+                      className="flex-1 border-2 border-dashed border-zinc-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 bg-white hover:bg-zinc-50/50 rounded-lg text-center cursor-pointer transition-colors flex items-center justify-center gap-2 px-3 py-1.5 outline-none"
+                      title="Clique aqui para focar e aperte Ctrl+V para colar o print do catálogo diretamente!"
+                    >
+                      <span className="bg-zinc-200 border border-zinc-350 px-1 py-0.5 rounded text-zinc-800 font-black text-[8px] font-sans">Ctrl + V</span>
+                      <span className="text-[10.5px] text-zinc-500 font-bold">Colar desenho aqui</span>
+                    </div>
+                  </div>
+
+                  {isExtracting && (
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-700 animate-pulse bg-amber-50 p-2 rounded-lg border border-amber-150">
+                      <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-ping" />
+                      <span>Analisando foto técnica... Isso pode levar de 3 a 5 segundos.</span>
+                    </div>
+                  )}
+
+                  {extractError && (
+                    <div className="text-[10px] font-bold text-red-700 bg-red-50 border border-red-150 px-2.5 py-2 rounded-lg">
+                      ⚠️ {extractError}
+                    </div>
+                  )}
+
+                  {extractedMedidas && (
+                    <div className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-150 px-2.5 py-2 rounded-lg flex items-center gap-1.5">
+                      <Check className="w-4 h-4 text-emerald-600" />
+                      <span>Medidas Aplicadas: <strong className="font-sans underline">{extractedMedidas}</strong></span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Multi images editor */}

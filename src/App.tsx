@@ -12,6 +12,8 @@ import {
   ArrowUpDown,
   Layers,
   Percent,
+  Coins,
+  Type,
   CheckCircle,
   HelpCircle,
   Truck,
@@ -25,7 +27,8 @@ import {
   Copy,
   Plus,
   Trash2,
-  X
+  X,
+  Pin
 } from "lucide-react";
 
 import { Category, Supplier, Product } from "./types";
@@ -42,6 +45,7 @@ import SupabaseSyncGuide from "./components/SupabaseSyncGuide";
 import BackupRestorePanel from "./components/BackupRestorePanel";
 import ProductDetailModal from "./components/ProductDetailModal";
 import { formatToInstagramStyle } from "./lib/instagramFormatter";
+import { roundPrice } from "./lib/priceUtils";
 
 export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -57,7 +61,15 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedSupplier, setSelectedSupplier] = useState("all");
-  const [sortBy, setSortBy] = useState<"name" | "price" | "newest">("newest");
+  const [sortBy, setSortBy] = useState<"name" | "price" | "price_asc" | "newest">("price_asc");
+  const [pinnedProductIds, setPinnedProductIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("ponto_pinned_products");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
 
   // Admin state & session
   const [isAdmin, setIsAdmin] = useState<boolean>(() => {
@@ -75,9 +87,10 @@ export default function App() {
 
   // Bulk actions status/confirmation states
   const [bulkActionConfirm, setBulkActionConfirm] = useState<{
-    type: "delete" | "format_instagram";
+    type: "delete" | "format_instagram" | "round_prices" | "capitalize_titles" | "change_category" | "change_supplier";
     count: number;
   } | null>(null);
+  const [bulkTargetId, setBulkTargetId] = useState<string>("");
   const [bulkSuccessToast, setBulkSuccessToast] = useState<string | null>(null);
   const [bulkIsProcessing, setBulkIsProcessing] = useState(false);
 
@@ -104,6 +117,86 @@ export default function App() {
     );
   };
 
+  const updatePinsOnSupabase = async (newPinnedIds: string[]) => {
+    if (!StorageService.isSupabaseActive()) return;
+    try {
+      const changedProducts: Product[] = [];
+      const updatedProducts = products.map((prod) => {
+        const foundIndex = newPinnedIds.indexOf(prod.id);
+        const nextPin = foundIndex !== -1 ? foundIndex : null;
+        if (prod.pin_index !== nextPin) {
+          const updated = { ...prod, pin_index: nextPin };
+          changedProducts.push(updated);
+          return updated;
+        }
+        return prod;
+      });
+
+      if (changedProducts.length > 0) {
+        setProducts(updatedProducts);
+        await Promise.all(
+          changedProducts.map(async (p) => {
+            try {
+              await StorageService.updateProduct(p);
+            } catch (err) {
+              console.warn("Falha ao salvar pin_index no Supabase (pode ser que precise adicionar a coluna na tabela ponto_products):", err);
+            }
+          })
+        );
+      }
+    } catch (err) {
+      console.error("Erro ao sincronizar destaques com banco de dados:", err);
+    }
+  };
+
+  const handleTogglePinProduct = (productId: string) => {
+    let next: string[] = [];
+    setPinnedProductIds((prev) => {
+      if (prev.includes(productId)) {
+        next = prev.filter((id) => id !== productId);
+      } else {
+        next = [...prev, productId];
+      }
+      localStorage.setItem("ponto_pinned_products", JSON.stringify(next));
+      return next;
+    });
+    setTimeout(() => {
+      updatePinsOnSupabase(next);
+    }, 10);
+  };
+
+  const handleMovePinUp = (index: number) => {
+    let next: string[] = [];
+    setPinnedProductIds((prev) => {
+      if (index === 0) return prev;
+      next = [...prev];
+      const temp = next[index];
+      next[index] = next[index - 1];
+      next[index - 1] = temp;
+      localStorage.setItem("ponto_pinned_products", JSON.stringify(next));
+      return next;
+    });
+    setTimeout(() => {
+      updatePinsOnSupabase(next);
+    }, 10);
+  };
+
+  const handleMovePinDown = (index: number) => {
+    let next: string[] = [];
+    setPinnedProductIds((prev) => {
+      if (index === prev.length - 1) return prev;
+      next = [...prev];
+      const temp = next[index];
+      next[index] = next[index + 1];
+      next[index + 1] = temp;
+      localStorage.setItem("ponto_pinned_products", JSON.stringify(next));
+      return next;
+    });
+    setTimeout(() => {
+      updatePinsOnSupabase(next);
+    }, 10);
+  };
+
   const triggerBulkDelete = () => {
     if (selectedProductIds.length === 0) return;
     setBulkActionConfirm({
@@ -118,6 +211,40 @@ export default function App() {
       type: "format_instagram",
       count: selectedProductIds.length,
     });
+  };
+
+  const triggerBulkRoundPrices = () => {
+    if (selectedProductIds.length === 0) return;
+    setBulkActionConfirm({
+      type: "round_prices",
+      count: selectedProductIds.length,
+    });
+  };
+
+  const triggerBulkCapitalizeTitles = () => {
+    if (selectedProductIds.length === 0) return;
+    setBulkActionConfirm({
+      type: "capitalize_titles",
+      count: selectedProductIds.length,
+    });
+  };
+
+  const triggerBulkChangeCategory = () => {
+    if (selectedProductIds.length === 0) return;
+    setBulkActionConfirm({
+      type: "change_category",
+      count: selectedProductIds.length,
+    });
+    setBulkTargetId(categories[0]?.id || "");
+  };
+
+  const triggerBulkChangeSupplier = () => {
+    if (selectedProductIds.length === 0) return;
+    setBulkActionConfirm({
+      type: "change_supplier",
+      count: selectedProductIds.length,
+    });
+    setBulkTargetId(suppliers[0]?.id || "");
   };
 
   const executeBulkAction = async () => {
@@ -144,6 +271,61 @@ export default function App() {
         setProducts(allUpdated);
         setSelectedProductIds([]);
         setBulkSuccessToast("Todas as descrições selecionadas foram organizadas no formato Instagram! ✨📸");
+      } else if (bulkActionConfirm.type === "round_prices") {
+        const selectedProducts = products.filter((p) => selectedProductIds.includes(p.id));
+        const updatedProducts = selectedProducts.map((p) => ({
+          ...p,
+          price_final: roundPrice(p.price_final),
+        }));
+        
+        const allUpdated = await StorageService.updateMultipleProducts(updatedProducts);
+        setProducts(allUpdated);
+        setSelectedProductIds([]);
+        setBulkSuccessToast("Todos os preços dos produtos selecionados foram arredondados com sucesso! 💰✨");
+      } else if (bulkActionConfirm.type === "capitalize_titles") {
+        const selectedProducts = products.filter((p) => selectedProductIds.includes(p.id));
+        const updatedProducts = selectedProducts.map((p) => {
+          const uName = p.name.toUpperCase();
+          const hasInsta = p.description.includes("DETALHES DO PRODUTO");
+          return {
+            ...p,
+            name: uName,
+            description: hasInsta ? formatToInstagramStyle(uName, p.description) : p.description,
+          };
+        });
+        
+        const allUpdated = await StorageService.updateMultipleProducts(updatedProducts);
+        setProducts(allUpdated);
+        setSelectedProductIds([]);
+        setBulkSuccessToast("Todos os títulos selecionados foram convertidos para CAIXA ALTA! 🔠✨");
+      } else if (bulkActionConfirm.type === "change_category") {
+        if (!bulkTargetId) {
+          throw new Error("Nenhuma categoria selecionada para alteração em lote.");
+        }
+        const selectedProducts = products.filter((p) => selectedProductIds.includes(p.id));
+        const updatedProducts = selectedProducts.map((p) => ({
+          ...p,
+          category_id: bulkTargetId,
+        }));
+        
+        const allUpdated = await StorageService.updateMultipleProducts(updatedProducts);
+        setProducts(allUpdated);
+        setSelectedProductIds([]);
+        setBulkSuccessToast("Categoria de todos os produtos selecionados foi alterada com sucesso! 🏷️✨");
+      } else if (bulkActionConfirm.type === "change_supplier") {
+        if (!bulkTargetId) {
+          throw new Error("Nenhum fornecedor selecionado para alteração em lote.");
+        }
+        const selectedProducts = products.filter((p) => selectedProductIds.includes(p.id));
+        const updatedProducts = selectedProducts.map((p) => ({
+          ...p,
+          supplier_id: bulkTargetId,
+        }));
+        
+        const allUpdated = await StorageService.updateMultipleProducts(updatedProducts);
+        setProducts(allUpdated);
+        setSelectedProductIds([]);
+        setBulkSuccessToast("Fornecedor de todos os produtos selecionados foi alterado com sucesso! 🏢✨");
       }
     } catch (err) {
       console.error("Erro ao executar ação em massa:", err);
@@ -168,6 +350,17 @@ export default function App() {
       setCategories(fetchedCategories);
       setSuppliers(fetchedSuppliers);
       setProducts(fetchedProducts);
+
+      // Check if any product has a valid db pin_index
+      const dbPinned = fetchedProducts
+        .filter((p) => typeof p.pin_index === "number" && p.pin_index !== null)
+        .sort((a, b) => (a.pin_index ?? 9999) - (b.pin_index ?? 9999))
+        .map((p) => p.id);
+
+      if (dbPinned.length > 0) {
+        setPinnedProductIds(dbPinned);
+        localStorage.setItem("ponto_pinned_products", JSON.stringify(dbPinned));
+      }
     } catch (err) {
       console.error("Erro ao carregar dados do catálogo:", err);
     } finally {
@@ -179,19 +372,28 @@ export default function App() {
     loadWorkspaceData();
   }, []);
 
-  // Sync URL hash for Deep Link Navigation
+  // Sync URL hash & search parameters for Deep Link Navigation
   useEffect(() => {
-    const handleHashChange = () => {
+    const handleUrlChange = () => {
       const hash = window.location.hash;
-      if (!hash) return;
+      const params = new URLSearchParams(window.location.search);
+      const queryProdId = params.get("produto") || params.get("product") || params.get("id");
       
-      if (hash.startsWith("#produto-")) {
+      if (queryProdId) {
+        const found = products.find((p) => p.id === queryProdId);
+        if (found) {
+          setSelectedProduct(found);
+          return;
+        }
+      }
+
+      if (hash && hash.startsWith("#produto-")) {
         const prodId = hash.replace("#produto-", "");
         const found = products.find((p) => p.id === prodId);
         if (found) {
           setSelectedProduct(found);
         }
-      } else if (hash.startsWith("#categoria-")) {
+      } else if (hash && hash.startsWith("#categoria-")) {
         const catId = hash.replace("#categoria-", "");
         setSelectedCategory(catId);
         const element = document.getElementById("catalog-showcase");
@@ -202,19 +404,42 @@ export default function App() {
     };
 
     if (products.length > 0) {
-      handleHashChange();
+      handleUrlChange();
     }
 
-    window.addEventListener("hashchange", handleHashChange);
-    return () => window.removeEventListener("hashchange", handleHashChange);
+    window.addEventListener("hashchange", handleUrlChange);
+    window.addEventListener("popstate", handleUrlChange);
+    return () => {
+      window.removeEventListener("hashchange", handleUrlChange);
+      window.removeEventListener("popstate", handleUrlChange);
+    };
   }, [products]);
 
-  // Update URL hash when selecting product detail
+  // Update URL hash and search parameters when selecting product detail
   useEffect(() => {
     if (selectedProduct) {
+      // Sync hash
       window.location.hash = `produto-${selectedProduct.id}`;
+      // Sync query parameter securely
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("produto", selectedProduct.id);
+        window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+      } catch (e) {
+        console.error("Erro ao atualizar query params:", e);
+      }
     } else {
-      // Revert back or clear hash if detail was active
+      // Revert back or clear hash/query if detail was active
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has("produto")) {
+          url.searchParams.delete("produto");
+          window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+        }
+      } catch (e) {
+        console.error("Erro ao limpar query params:", e);
+      }
+
       if (window.location.hash.startsWith("#produto-")) {
         window.location.hash = selectedCategory !== "all" ? `categoria-${selectedCategory}` : "";
       }
@@ -374,10 +599,26 @@ export default function App() {
 
   // Sort filtered products
   const sortedProducts = [...filteredProducts].sort((a, b) => {
+    // Check if pins are defined and active
+    const aPinnedIdx = pinnedProductIds.indexOf(a.id);
+    const bPinnedIdx = pinnedProductIds.indexOf(b.id);
+    const aIsPinned = aPinnedIdx !== -1;
+    const bIsPinned = bPinnedIdx !== -1;
+
+    // Pinned products always come first, ordered 1st to 5th
+    if (aIsPinned && bIsPinned) {
+      return aPinnedIdx - bPinnedIdx;
+    }
+    if (aIsPinned) return -1;
+    if (bIsPinned) return 1;
+
+    // Standard sorts for unpinned items
     if (sortBy === "name") {
       return a.name.localeCompare(b.name);
     } else if (sortBy === "price") {
-      return b.price_final - a.price_final;
+      return b.price_final - a.price_final; // Highest price first
+    } else if (sortBy === "price_asc") {
+      return a.price_final - b.price_final; // Lowest price first
     } else {
       return b.id.localeCompare(a.id);
     }
@@ -653,7 +894,7 @@ export default function App() {
                     </label>
 
                     {selectedProductIds.length > 0 && (
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
                           onClick={triggerBulkFormatInstagram}
@@ -662,6 +903,42 @@ export default function App() {
                         >
                           <Sparkles className="w-3.5 h-3.5" />
                           Formatar Instagram 📸
+                        </button>
+                        <button
+                          type="button"
+                          onClick={triggerBulkRoundPrices}
+                          className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-amber-400 border border-zinc-700 font-black text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition-all shadow-xs active:scale-95"
+                          title="Arredondar preços dos produtos selecionados usando a regra inteligente"
+                        >
+                          <Coins className="w-3.5 h-3.5" />
+                          Arredondar Preços 💰
+                        </button>
+                        <button
+                          type="button"
+                          onClick={triggerBulkCapitalizeTitles}
+                          className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-blue-400 border border-zinc-700 font-black text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition-all shadow-xs active:scale-95"
+                          title="Transformar títulos de todos os selecionados em Caixa Alta (Maiúsculas)"
+                        >
+                          <Type className="w-3.5 h-3.5" />
+                          Títulos em Caixa Alta 🔠
+                        </button>
+                        <button
+                          type="button"
+                          onClick={triggerBulkChangeCategory}
+                          className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-emerald-400 border border-zinc-700 font-black text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition-all shadow-xs active:scale-95"
+                          title="Alterar a categoria de todos os itens selecionados de uma vez"
+                        >
+                          <Tag className="w-3.5 h-3.5" />
+                          Mudar Categoria 🏷️
+                        </button>
+                        <button
+                          type="button"
+                          onClick={triggerBulkChangeSupplier}
+                          className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-indigo-400 border border-zinc-700 font-black text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition-all shadow-xs active:scale-95"
+                          title="Alterar o fornecedor de todos os itens selecionados de uma vez"
+                        >
+                          <Building2 className="w-3.5 h-3.5" />
+                          Mudar Fornecedor 🏢
                         </button>
                         <button
                           type="button"
@@ -699,6 +976,9 @@ export default function App() {
                           isSelected={selectedProductIds.includes(p.id)}
                           onToggleSelect={handleToggleSelectProduct}
                           onUpdate={handleUpdateProduct}
+                          isPinned={pinnedProductIds.includes(p.id)}
+                          pinnedIndex={pinnedProductIds.indexOf(p.id)}
+                          onTogglePin={handleTogglePinProduct}
                         />
                       ))}
 
@@ -722,6 +1002,84 @@ export default function App() {
 
             {/* COLUMN 3: Bulk adjusts prices & lists */}
             <section className="lg:col-span-3 space-y-6">
+              {/* PINNED PRODUCTS HIGH-PRIORITY MANAGER */}
+              <div className="bg-white border border-amber-200 p-5 rounded-2xl shadow-xs space-y-4 relative overflow-hidden">
+                <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-amber-400 to-amber-600" />
+                
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-amber-50 rounded-xl border border-amber-200">
+                    <Pin className="w-4 h-4 text-amber-600 rotate-45 fill-amber-500" />
+                  </div>
+                  <div>
+                    <h3 className="font-sans font-black text-xs text-zinc-900 uppercase tracking-wider">
+                      Destaques do Catálogo
+                    </h3>
+                    <p className="text-[10px] text-zinc-500 font-medium leading-none mt-0.5">
+                      Estes produtos sempre aparecem primeiro.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {pinnedProductIds.length === 0 ? (
+                    <div className="py-4 text-center border border-dashed border-zinc-200 rounded-xl text-[11px] text-zinc-400 font-medium">
+                      Nenhum produto fixado.<br />
+                      Toque no pino 📌 nos cartões para destacar!
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {pinnedProductIds.map((id, index) => {
+                        const prod = products.find((p) => p.id === id);
+                        if (!prod) return null;
+                        return (
+                          <div
+                            key={id}
+                            className="flex items-center justify-between gap-2 p-2 bg-zinc-50 hover:bg-zinc-100 border border-zinc-200 text-xs rounded-xl"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="w-5 h-5 bg-amber-100 text-amber-900 text-[10px] font-black rounded-lg flex items-center justify-center border border-amber-200">
+                                {index + 1}º
+                              </span>
+                              <span className="font-extrabold text-zinc-805 text-[11px] truncate" title={prod.name}>
+                                {prod.name}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <button
+                                type="button"
+                                disabled={index === 0}
+                                onClick={() => handleMovePinUp(index)}
+                                className="p-1 hover:bg-zinc-200 text-zinc-500 rounded disabled:opacity-30 cursor-pointer text-[10px]"
+                                title="Mover para cima"
+                              >
+                                ▲
+                              </button>
+                              <button
+                                type="button"
+                                disabled={index === pinnedProductIds.length - 1}
+                                onClick={() => handleMovePinDown(index)}
+                                className="p-1 hover:bg-zinc-200 text-zinc-500 rounded disabled:opacity-30 cursor-pointer text-[10px]"
+                                title="Mover para baixo"
+                              >
+                                ▼
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleTogglePinProduct(id)}
+                                className="p-1 text-red-500 hover:bg-red-50 rounded cursor-pointer font-black text-[13px] leading-none ml-1"
+                                title="Remover de Destaques"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <BulkAdjustPrices 
                 suppliers={suppliers}
                 onApplyBulkAdjust={handleApplyBulkAdjust}
@@ -847,11 +1205,12 @@ export default function App() {
                   <select
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value as any)}
-                    className="bg-transparent font-bold text-zinc-700 cursor-pointer focus:outline-none"
+                    className="bg-transparent font-bold text-zinc-700 cursor-pointer focus:outline-none focus:ring-0"
                   >
                     <option value="newest">Mais Recentes</option>
                     <option value="name">Ordem Alfabética</option>
-                    <option value="price">Maior Preço</option>
+                    <option value="price_asc">Menor Preço 💰</option>
+                    <option value="price">Maior Preço 💎</option>
                   </select>
                 </div>
 
@@ -898,6 +1257,8 @@ export default function App() {
                       onDelete={handleDeleteProduct}
                       onView={(clicked) => setSelectedProduct(clicked)}
                       isAdmin={false}
+                      isPinned={pinnedProductIds.includes(p.id)}
+                      pinnedIndex={pinnedProductIds.indexOf(p.id)}
                     />
                   ))}
                 </div>
@@ -1058,11 +1419,33 @@ export default function App() {
           <div className="bg-white rounded-3xl p-6 max-w-sm w-full border border-zinc-200/55 shadow-xl animate-scale-up space-y-4 text-left">
             <div className="flex items-center gap-3 text-amber-600">
               <div className="p-2.5 bg-amber-50 rounded-2xl">
-                <Sparkles className="w-6 h-6 text-amber-500" />
+                {bulkActionConfirm.type === "round_prices" ? (
+                  <Coins className="w-6 h-6 text-amber-500" />
+                ) : bulkActionConfirm.type === "capitalize_titles" ? (
+                  <Type className="w-6 h-6 text-blue-500" />
+                ) : bulkActionConfirm.type === "change_category" ? (
+                  <Tag className="w-6 h-6 text-emerald-500" />
+                ) : bulkActionConfirm.type === "change_supplier" ? (
+                  <Building2 className="w-6 h-6 text-indigo-500" />
+                ) : bulkActionConfirm.type === "delete" ? (
+                  <Trash2 className="w-6 h-6 text-red-500" />
+                ) : (
+                  <Sparkles className="w-6 h-6 text-amber-500" />
+                )}
               </div>
               <div>
                 <h3 className="font-bold text-zinc-900 text-sm">
-                  {bulkActionConfirm.type === "delete" ? "Remover móveis" : "Organizar descrições"}
+                  {bulkActionConfirm.type === "delete" 
+                    ? "Remover móveis" 
+                    : bulkActionConfirm.type === "round_prices"
+                    ? "Arredondar preços"
+                    : bulkActionConfirm.type === "capitalize_titles"
+                    ? "Títulos em Caixa Alta"
+                    : bulkActionConfirm.type === "change_category"
+                    ? "Mudar categoria em lote"
+                    : bulkActionConfirm.type === "change_supplier"
+                    ? "Mudar fornecedor em lote"
+                    : "Organizar descrições"}
                 </h3>
                 <p className="text-[11px] text-zinc-500">Ação para {bulkActionConfirm.count} {bulkActionConfirm.count === 1 ? 'item selecionado' : 'itens selecionados'}</p>
               </div>
@@ -1071,8 +1454,51 @@ export default function App() {
             <p className="text-zinc-650 text-xs leading-relaxed">
               {bulkActionConfirm.type === "delete" 
                 ? `Tem certeza de que deseja remover permanentemente os ${bulkActionConfirm.count} produtos selecionados do catálogo?` 
-                : "Deseja reformatar e organizar as descrições de todos os produtos selecionados no estilo do Instagram (detalhes com emojis, sem preços repetidos e sem links)? Isso facilitará muito a cópula e divulgação de catálogo."}
+                : bulkActionConfirm.type === "round_prices"
+                ? `Deseja arredondar o preço final de todos os ${bulkActionConfirm.count} produtos selecionados? Produtos com centenas próximas (como x05, x10) arredondam para trás terminando em 99,00 (ex: 807 -> 799; 1010 -> 999). Outros valores arredondam para frente terminando em 9 (ex: 771,82 -> 779; 1027 -> 1029).`
+                : bulkActionConfirm.type === "capitalize_titles"
+                ? `Deseja transformar o título de todos os ${bulkActionConfirm.count} produtos selecionados para LETRAS MAIÚSCULAS (CAIXA ALTA)? Isso padronizará o catálogo.`
+                : bulkActionConfirm.type === "change_category"
+                ? `Selecione para qual categoria deseja mover os ${bulkActionConfirm.count} produtos selecionados:`
+                : bulkActionConfirm.type === "change_supplier"
+                ? `Selecione para qual fornecedor deseja mover os ${bulkActionConfirm.count} produtos selecionados:`
+                : "Deseja reformatar e organizar as descrições de todos os produtos selecionados no estilo do Instagram (detalhes com emojis, sem preços repetidos e sem links)? Isso facilitará muito a cópia e divulgação de catálogo."}
             </p>
+
+            {/* Render select menus for bulk updating relations */}
+            {bulkActionConfirm.type === "change_category" && (
+              <div className="space-y-1">
+                <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider">Nova Categoria</label>
+                <select
+                  value={bulkTargetId}
+                  onChange={(e) => setBulkTargetId(e.target.value)}
+                  className="w-full px-3 py-2 border border-zinc-250 rounded-xl text-xs text-zinc-950 bg-white shadow-xs focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none"
+                >
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {bulkActionConfirm.type === "change_supplier" && (
+              <div className="space-y-1">
+                <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider">Novo Fornecedor</label>
+                <select
+                  value={bulkTargetId}
+                  onChange={(e) => setBulkTargetId(e.target.value)}
+                  className="w-full px-3 py-2 border border-zinc-250 rounded-xl text-xs text-zinc-950 bg-white shadow-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:outline-none"
+                >
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="flex gap-2 pt-2">
               <button
@@ -1090,6 +1516,14 @@ export default function App() {
                 className={`flex-1 py-2 text-white font-extrabold text-xs rounded-xl cursor-pointer transition-all ${
                   bulkActionConfirm.type === "delete" 
                     ? "bg-red-600 hover:bg-red-700" 
+                    : bulkActionConfirm.type === "round_prices"
+                    ? "bg-amber-500 hover:bg-amber-600"
+                    : bulkActionConfirm.type === "capitalize_titles"
+                    ? "bg-blue-600 hover:bg-blue-700"
+                    : bulkActionConfirm.type === "change_category"
+                    ? "bg-emerald-600 hover:bg-emerald-700"
+                    : bulkActionConfirm.type === "change_supplier"
+                    ? "bg-indigo-600 hover:bg-indigo-700"
                     : "bg-gradient-to-r from-purple-600 via-pink-600 to-amber-500 hover:opacity-95"
                 }`}
               >
